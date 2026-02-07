@@ -1,4 +1,5 @@
 # Software Requirements for FOCI Cluster
+
 A100 - CUDA 11.4 or later supported
 tensorflow-2.12.0 (minimum version for CUDA 11.8)
 python 3.8-3.11
