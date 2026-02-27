@@ -2,21 +2,22 @@ import networkx as nx
 import numpy as np
 import os
 import math
+import argparse
 import gurobipy as gp
 from utils import read_nxgraph
 from utils import float_to_binary
 from utils import base64_encode
 
+
 def save_to_file(model, file_path, time_limit, print_terminal=True):
-    
-    file_dir = f"results/gurobi/{"/".join(file_path.split("/")[:-1])}"
+    file_dir = f"results/gurobi/{'/'.join(file_path.split('/')[:-1])}"
     file_name = file_path.split("/")[-1]
 
     obj_val = model.ObjVal
     obj_bnd = model.ObjBound
     duration = model.Runtime
     mip_gap = model.MIPGap
-    best_solution = "".join([ float_to_binary(x.X) for x in model.getVars() ])
+    best_solution = "".join([float_to_binary(x.X) for x in model.getVars()])
     best_encoded = base64_encode(best_solution)
 
     with open(f"{file_dir}/{file_name}", "w") as f:
@@ -39,7 +40,6 @@ def save_to_file(model, file_path, time_limit, print_terminal=True):
 
 
 def gurobi_solve(graph, file_path, time_limit=3600):
-
     nodes = len(list(graph.nodes))
     J = nx.to_numpy_array(graph)
 
@@ -48,35 +48,63 @@ def gurobi_solve(graph, file_path, time_limit=3600):
     x = model.addVars(nodes, vtype=gp.GRB.BINARY)
     objective = gp.quicksum(
         -J[i, j] * (2 * x[i] - 1) * (2 * x[j] - 1)
-        for i in range(nodes) for j in range(i+1, nodes) if J[i, j] != 0.0
+        for i in range(nodes)
+        for j in range(i + 1, nodes)
+        if J[i, j] != 0.0
     )
     model.setObjective(objective, gp.GRB.MINIMIZE)
-    model.setParam('TimeLimit', time_limit)    
+    model.setParam("TimeLimit", time_limit)
     model.setParam("MIPGap", 0.0)
 
-    file_dir = f"results/gurobi/{"/".join(file_path.split("/")[:-1])}"
+    file_dir = f"results/gurobi/{'/'.join(file_path.split('/')[:-1])}"
     file_name = file_path.split("/")[-1]
     if not os.path.exists(file_dir):
         os.makedirs(file_dir)
-    model.Params.LogFile = f"{file_dir}/{file_name.split(".")[0]}.log"
+    model.Params.LogFile = f"{file_dir}/{file_name.split('.')[0]}.log"
 
     model.optimize()
     save_to_file(model, file_path, time_limit)
+
 
 def single_shot_instance(file_name, time_limit):
     graph = read_nxgraph(file_name)
     file_path = file_name[5:]
     gurobi_solve(graph, file_path, time_limit)
 
+
 def multiple_shot_instance(file_names, time_limit):
     for file_name in file_names:
         single_shot_instance(file_name, time_limit)
 
-if __name__ == "__main__":
-    file_name = "../../data/DRL/2D/10/DRL_10_ID0.txt"
-    time_limit = 3600
-    single_shot_instance(file_name, time_limit)
 
-    # file_names = [ "data/vna/ER/40x40_uniform_seed1.txt", "data/vna/ER/40x40_uniform_seed15.txt", "data/vna/ER/40x40_uniform_seed25.txt" ]
-    # time_limit = 3600
-    # multiple_shot_instance(file_names, time_limit)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Run Gurobi MaxCut QUBO solver on one or multiple graphs."
+    )
+
+    # nargs='+' tells argparse to accept 1 or more arguments into a list
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        default=["../../src/data/1D/VNA/Chain/32/ising_chain_32_seed1.txt"],
+        help="One or more file paths to process. Defaults to a specific test file if omitted.",
+    )
+
+    # Optional argument for time limit, defaults to 3600
+    parser.add_argument(
+        "-t",
+        "--time_limit",
+        type=int,
+        default=3600,
+        help="Time limit for the solver in seconds (default: 3600).",
+    )
+
+    args = parser.parse_args()
+
+    # Route to the correct function based on the number of paths provided
+    if len(args.paths) == 1:
+        single_shot_instance(args.paths[0], args.time_limit)
+    elif len(args.paths) > 1:
+        multiple_shot_instance(args.paths, args.time_limit)
+    else:
+        print("No paths were provided or found in defaults.")
