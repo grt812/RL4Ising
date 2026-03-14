@@ -2,8 +2,9 @@ import networkx as nx
 import numpy as np
 import os
 import math
-import argparse
 import gurobipy as gp
+import argparse
+import csv
 from utils import read_nxgraph
 from utils import float_to_binary
 from utils import base64_encode
@@ -19,6 +20,9 @@ def save_to_file(model, file_path, time_limit, print_terminal=True):
     mip_gap = model.MIPGap
     best_solution = "".join([float_to_binary(x.X) for x in model.getVars()])
     best_encoded = base64_encode(best_solution)
+
+    if not os.path.exists(file_dir):
+        os.makedirs(file_dir)
 
     with open(f"{file_dir}/{file_name}", "w") as f:
         f.write(f"Objective Value: {obj_val}\n")
@@ -37,6 +41,8 @@ def save_to_file(model, file_path, time_limit, print_terminal=True):
         print(f"MIP Gap: {mip_gap}")
         print(f"Best Solution Encoded: {best_encoded}")
         print(f"Best Solution Raw: {best_solution}\n")
+
+    return best_solution
 
 
 def gurobi_solve(graph, file_path, time_limit=3600):
@@ -63,13 +69,17 @@ def gurobi_solve(graph, file_path, time_limit=3600):
     model.Params.LogFile = f"{file_dir}/{file_name.split('.')[0]}.log"
 
     model.optimize()
-    save_to_file(model, file_path, time_limit)
+
+    return save_to_file(model, file_path, time_limit)
 
 
 def single_shot_instance(file_name, time_limit):
     graph = read_nxgraph(file_name)
+    # TODO : change for file path of various lengths
     file_path = file_name[5:]
-    gurobi_solve(graph, file_path, time_limit)
+
+    # Return the result up the chain
+    return gurobi_solve(graph, file_path, time_limit)
 
 
 def multiple_shot_instance(file_names, time_limit):
@@ -77,12 +87,39 @@ def multiple_shot_instance(file_names, time_limit):
         single_shot_instance(file_name, time_limit)
 
 
+def directory_shot_instance(
+    folder_path, time_limit, output_csv="directory_results.csv"
+):
+    results = []
+
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            file_name = os.path.join(root, file)
+            abs_path = os.path.abspath(file_name)
+
+            print(f"\n--- Processing: {file_name} ---")
+            try:
+                best_solution = single_shot_instance(file_name, time_limit)
+                results.append([abs_path, best_solution])
+            except Exception as e:
+                # Error handling so one bad file doesn't crash the whole batch
+                print(f"Skipping {file_name} due to error: {e}")
+                results.append([abs_path, f"ERROR: {e}"])
+
+    # Write everything to CSV
+    with open(output_csv, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Absolute Path", "Best Solution Raw"])
+        writer.writerows(results)
+
+    print(f"\nBatch processing complete. Results saved to '{output_csv}'.")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run Gurobi MaxCut QUBO solver on one or multiple graphs."
+        description="Run Gurobi MaxCut QUBO solver on graphs."
     )
 
-    # nargs='+' tells argparse to accept 1 or more arguments into a list
     parser.add_argument(
         "paths",
         nargs="*",
@@ -90,7 +127,6 @@ if __name__ == "__main__":
         help="One or more file paths to process. Defaults to a specific test file if omitted.",
     )
 
-    # Optional argument for time limit, defaults to 3600
     parser.add_argument(
         "-t",
         "--time_limit",
@@ -99,12 +135,28 @@ if __name__ == "__main__":
         help="Time limit for the solver in seconds (default: 3600).",
     )
 
+    parser.add_argument(
+        "-d",
+        "--directory",
+        type=str,
+        help="Process all files in this directory and output results to a CSV.",
+    )
+
+    parser.add_argument(
+        "--csv_out",
+        type=str,
+        default="gurobi_batch_results.csv",
+        help="Name of the output CSV file when using the directory flag (default: batch_results.csv).",
+    )
+
     args = parser.parse_args()
 
-    # Route to the correct function based on the number of paths provided
-    if len(args.paths) == 1:
+    if args.directory:
+        directory_shot_instance(args.directory, args.time_limit, args.csv_out)
+    elif len(args.paths) == 1:
         single_shot_instance(args.paths[0], args.time_limit)
     elif len(args.paths) > 1:
+        # Multiple specific files
         multiple_shot_instance(args.paths, args.time_limit)
     else:
-        print("No paths were provided or found in defaults.")
+        print("No paths or directories were provided.")
