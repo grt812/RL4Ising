@@ -90,27 +90,50 @@ def multiple_shot_instance(file_names, time_limit):
 def directory_shot_instance(
     folder_path, time_limit, output_csv="directory_results.csv"
 ):
-    results = []
+    processed_files = set()
 
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            file_name = os.path.join(root, file)
-            abs_path = os.path.abspath(file_name)
+    # Step 1: If CSV exists, read it to figure out what has already been done
+    if os.path.exists(output_csv):
+        with open(output_csv, mode="r", newline="") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # Skip the header row
+            for row in reader:
+                if row:  # Make sure the row isn't empty
+                    processed_files.add(
+                        row[0]
+                    )  # Add the absolute path to our 'done' set
 
-            print(f"\n--- Processing: {file_name} ---")
-            try:
-                best_solution = single_shot_instance(file_name, time_limit)
-                results.append([abs_path, best_solution])
-            except Exception as e:
-                # Error handling so one bad file doesn't crash the whole batch
-                print(f"Skipping {file_name} due to error: {e}")
-                results.append([abs_path, f"ERROR: {e}"])
+    file_exists = os.path.exists(output_csv)
 
-    # Write everything to CSV
-    with open(output_csv, mode="w", newline="") as f:
+    # Step 2: Open the CSV in "append" mode ("a") so we write live, row by row
+    with open(output_csv, mode="a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Absolute Path", "Best Solution Raw"])
-        writer.writerows(results)
+
+        # Write header only if the file is brand new
+        if not file_exists:
+            writer.writerow(["Absolute Path", "Best Solution Raw"])
+
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                file_name = os.path.join(root, file)
+                abs_path = os.path.abspath(file_name)
+
+                # Check if we already solved this file
+                if abs_path in processed_files:
+                    print(f"Skipping already processed file: {file_name}")
+                    continue
+
+                print(f"\n--- Processing: {file_name} ---")
+                try:
+                    best_solution = single_shot_instance(file_name, time_limit)
+                    # Write the result immediately to the CSV
+                    writer.writerow([abs_path, best_solution])
+                except Exception as e:
+                    print(f"Skipping {file_name} due to error: {e}")
+                    writer.writerow([abs_path, f"ERROR: {e}"])
+
+                # Step 3: Flush the buffer to physically write to disk immediately
+                f.flush()
 
     print(f"\nBatch processing complete. Results saved to '{output_csv}'.")
 
@@ -132,7 +155,7 @@ if __name__ == "__main__":
         "--time_limit",
         type=int,
         default=3600,
-        help="Time limit for the solver in seconds (default: 3600).",
+        help="Time limit for the solver in seconds (default: 60).",
     )
 
     parser.add_argument(
@@ -146,7 +169,7 @@ if __name__ == "__main__":
         "--csv_out",
         type=str,
         default="gurobi_batch_results.csv",
-        help="Name of the output CSV file when using the directory flag (default: batch_results.csv).",
+        help="Name of the output CSV file when using the directory flag (default: gurobi_batch_results.csv).",
     )
 
     args = parser.parse_args()
