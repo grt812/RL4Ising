@@ -10,10 +10,7 @@ from utils import float_to_binary
 from utils import base64_encode
 
 
-def save_to_file(model, file_path, time_limit, print_terminal=True):
-    file_dir = f"results/gurobi/{'/'.join(file_path.split('/')[:-1])}"
-    file_name = file_path.split("/")[-1]
-
+def save_to_file(model, file_name, time_limit, out_dir, print_terminal=True):
     obj_val = model.ObjVal
     obj_bnd = model.ObjBound
     duration = model.Runtime
@@ -21,10 +18,11 @@ def save_to_file(model, file_path, time_limit, print_terminal=True):
     best_solution = "".join([float_to_binary(x.X) for x in model.getVars()])
     best_encoded = base64_encode(best_solution)
 
-    if not os.path.exists(file_dir):
-        os.makedirs(file_dir)
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
-    with open(f"{file_dir}/{file_name}", "w") as f:
+    base_name = os.path.basename(file_name)
+    with open(os.path.join(out_dir, base_name), "w") as f:
         f.write(f"Objective Value: {obj_val}\n")
         f.write(f"Objective Bound: {obj_bnd}\n")
         f.write(f"Duration: {duration}\n")
@@ -45,7 +43,7 @@ def save_to_file(model, file_path, time_limit, print_terminal=True):
     return best_solution
 
 
-def gurobi_solve(graph, file_path, time_limit=3600):
+def gurobi_solve(graph, file_name, time_limit, out_dir):
     nodes = len(list(graph.nodes))
     J = nx.to_numpy_array(graph)
 
@@ -62,80 +60,79 @@ def gurobi_solve(graph, file_path, time_limit=3600):
     model.setParam("TimeLimit", time_limit)
     model.setParam("MIPGap", 0.0)
 
-    file_dir = f"results/gurobi/{'/'.join(file_path.split('/')[:-1])}"
-    file_name = file_path.split("/")[-1]
-    if not os.path.exists(file_dir):
-        os.makedirs(file_dir)
-    model.Params.LogFile = f"{file_dir}/{file_name.split('.')[0]}.log"
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    base_name = os.path.basename(file_name)
+    model.Params.LogFile = os.path.join(out_dir, f"{base_name.split('.')[0]}.log")
 
     model.optimize()
 
-    return save_to_file(model, file_path, time_limit)
+    return save_to_file(model, file_name, time_limit, out_dir)
 
 
-def single_shot_instance(file_name, time_limit):
+def single_shot_instance(file_name, time_limit, out_dir):
     graph = read_nxgraph(file_name)
-    # TODO : change for file path of various lengths
-    file_path = file_name[5:]
-
-    # Return the result up the chain
-    return gurobi_solve(graph, file_path, time_limit)
+    return gurobi_solve(graph, file_name, time_limit, out_dir)
 
 
-def multiple_shot_instance(file_names, time_limit):
+def multiple_shot_instance(file_names, time_limit, out_dir):
     for file_name in file_names:
-        single_shot_instance(file_name, time_limit)
+        single_shot_instance(file_name, time_limit, out_dir)
 
 
-def directory_shot_instance(
-    folder_path, time_limit, output_csv="directory_results.csv"
-):
+def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
+    if not os.path.isdir(in_dir):
+        print(f"\n[!] ERROR: The input directory '{in_dir}' does not exist.")
+        return
+
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    csv_path = os.path.join(out_dir, output_csv)
     processed_files = set()
 
-    # Step 1: If CSV exists, read it to figure out what has already been done
-    if os.path.exists(output_csv):
-        with open(output_csv, mode="r", newline="") as f:
+    if os.path.exists(csv_path):
+        with open(csv_path, mode="r", newline="") as f:
             reader = csv.reader(f)
-            next(reader, None)  # Skip the header row
+            next(reader, None)
             for row in reader:
-                if row:  # Make sure the row isn't empty
-                    processed_files.add(
-                        row[0]
-                    )  # Add the absolute path to our 'done' set
+                if len(row) >= 2 and "ERROR" not in row[1]:
+                    processed_files.add(row[0])
 
-    file_exists = os.path.exists(output_csv)
-
-    # Step 2: Open the CSV in "append" mode ("a") so we write live, row by row
-    with open(output_csv, mode="a", newline="") as f:
+    file_exists = os.path.exists(csv_path)
+    with open(csv_path, mode="a", newline="") as f:
         writer = csv.writer(f)
 
-        # Write header only if the file is brand new
         if not file_exists:
             writer.writerow(["Absolute Path", "Best Solution Raw"])
 
-        for root, dirs, files in os.walk(folder_path):
+        for root, dirs, files in os.walk(in_dir):
             for file in files:
+                if not file.endswith(".txt"):
+                    continue
+
+                if file == output_csv:
+                    continue
+
                 file_name = os.path.join(root, file)
                 abs_path = os.path.abspath(file_name)
 
-                # Check if we already solved this file
                 if abs_path in processed_files:
                     print(f"Skipping already processed file: {file_name}")
                     continue
 
-                print(f"\n--- Processing: {file_name} ---")
+                print(f"\nProcessing: {file_name}")
                 try:
-                    best_solution = single_shot_instance(file_name, time_limit)
-                    # Write the result immediately to the CSV
+                    best_solution = single_shot_instance(file_name, time_limit, out_dir)
                     writer.writerow([abs_path, best_solution])
                 except Exception as e:
-                    print(f"Skipping {file_name} due to error: {e}")
+                    print(f"Failed {file_name} due to error: {e}")
                     writer.writerow([abs_path, f"ERROR: {e}"])
 
-                # Step 3: Flush the buffer to physically write to disk immediately
                 f.flush()
 
-    print(f"\nBatch processing complete. Results saved to '{output_csv}'.")
+    print(f"\nBatch processing complete. Results saved to '{csv_path}'.")
 
 
 if __name__ == "__main__":
@@ -155,31 +152,40 @@ if __name__ == "__main__":
         "--time_limit",
         type=int,
         default=3600,
-        help="Time limit for the solver in seconds (default: 60).",
+        help="Time limit for the solver in seconds (default: 3600).",
     )
 
     parser.add_argument(
-        "-d",
-        "--directory",
+        "-i",
+        "--in_dir",
         type=str,
-        help="Process all files in this directory and output results to a CSV.",
+        help="Input directory. Process all .txt files in this folder.",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--out_dir",
+        type=str,
+        default="results/gurobi/newest",
+        help="Output directory for logs, individual text files, and the CSV.",
     )
 
     parser.add_argument(
         "--csv_out",
         type=str,
         default="gurobi_batch_results.csv",
-        help="Name of the output CSV file when using the directory flag (default: gurobi_batch_results.csv).",
+        help="Name of the output CSV file (saved inside out_dir).",
     )
 
     args = parser.parse_args()
 
-    if args.directory:
-        directory_shot_instance(args.directory, args.time_limit, args.csv_out)
+    if args.in_dir:
+        directory_shot_instance(
+            args.in_dir, args.time_limit, args.out_dir, args.csv_out
+        )
     elif len(args.paths) == 1:
-        single_shot_instance(args.paths[0], args.time_limit)
+        single_shot_instance(args.paths[0], args.time_limit, args.out_dir)
     elif len(args.paths) > 1:
-        # Multiple specific files
-        multiple_shot_instance(args.paths, args.time_limit)
+        multiple_shot_instance(args.paths, args.time_limit, args.out_dir)
     else:
         print("No paths or directories were provided.")
