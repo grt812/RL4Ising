@@ -96,7 +96,6 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
     csv_path = os.path.join(out_dir, output_csv)
     csv_data = {}
 
-    # Sync logs
     if os.path.exists(csv_path):
         with open(csv_path, mode="r", newline="") as f:
             reader = csv.reader(f)
@@ -120,7 +119,7 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                 val = csv_data[abs_path]
                 is_binary = all(c in "01" for c in val) and len(val) >= 8
 
-                # If it's a license limit, we leave it alone so it gets skipped.
+                # Skip license limit
                 if "LICENSE_LIMIT" in val or "size-limited" in val.lower():
                     csv_data[abs_path] = "LICENSE_LIMIT"
 
@@ -206,7 +205,6 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
             for p, v in csv_data.items():
                 writer.writerow([p, v])
 
-    # --- PHASE 2: PROCESSING LOOP ---
     with open(csv_path, mode="a", newline="") as f:
         writer = csv.writer(f)
 
@@ -218,8 +216,6 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                 abs_path = os.path.abspath(os.path.join(root, file))
 
                 if abs_path in csv_data:
-                    # Won't print skip messages for LICENSE_LIMIT to keep terminal clean,
-                    # but it will safely ignore them.
                     if csv_data[abs_path] != "LICENSE_LIMIT":
                         print(f"Skipping already completed file: {file}")
                     continue
