@@ -94,120 +94,142 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
         os.makedirs(out_dir)
 
     csv_path = os.path.join(out_dir, output_csv)
+    csv_data = {}  # Store existing valid rows here
 
+    # --- PHASE 1: CSV & LOG SYNCHRONIZATION ---
+    # Load whatever is currently in the CSV
     if os.path.exists(csv_path):
-        valid_rows = []
-        cleaned_something = False
         with open(csv_path, mode="r", newline="") as f:
             reader = csv.reader(f)
-            header = next(reader, None)
-            if header:
-                valid_rows.append(header)
-
+            next(reader, None)  # Skip header
             for row in reader:
                 if len(row) >= 2:
-                    val = str(row[1]).strip()
-                    abs_path = row[0]
-                    file_name = os.path.basename(abs_path)
-                    log_file_name = f"{file_name.split('.')[0]}.log"
-                    log_path = os.path.join(out_dir, log_file_name)
+                    csv_data[row[0]] = str(row[1]).strip()
 
-                    is_valid = True
-                    is_binary = all(c in "01" for c in val) and len(val) >= 8
+    synced_something = False
 
-                    if "INTERRUPTED" in val or "ERROR" in val:
-                        is_valid = False
-                    elif is_binary:
-                        if os.path.exists(log_path):
-                            with open(log_path, "r", errors="ignore") as log_f:
-                                log_content = log_f.read()
-                                if "Solve interrupted" in log_content:
-                                    is_valid = False
-                                else:
-                                    # Target the exact printed string to avoid scientific notation
-                                    match = re.search(
-                                        r"Objective Value:\s*([-\d\.]+)", log_content
+    # Walk input files to cross-check against logs and CSV
+    for root, dirs, files in os.walk(in_dir):
+        for file in files:
+            if not file.endswith(".txt") or file == output_csv:
+                continue
+
+            abs_path = os.path.abspath(os.path.join(root, file))
+            log_file_name = f"{file.split('.')[0]}.log"
+            log_path = os.path.join(out_dir, log_file_name)
+
+            # Scenario A: The file is already in the CSV. We validate it.
+            if abs_path in csv_data:
+                val = csv_data[abs_path]
+                is_binary = all(c in "01" for c in val) and len(val) >= 8
+
+                if "INTERRUPTED" in val or "ERROR" in val:
+                    del csv_data[abs_path]
+                    synced_something = True
+                elif is_binary:
+                    if os.path.exists(log_path):
+                        with open(log_path, "r", errors="ignore") as log_f:
+                            log_content = log_f.read()
+                            if "Solve interrupted" in log_content:
+                                del csv_data[abs_path]
+                                synced_something = True
+                            else:
+                                match = re.search(
+                                    r"Objective Value:\s*([-\d\.]+)", log_content
+                                )
+                                if match:
+                                    csv_data[abs_path] = match.group(1)
+                                    synced_something = True
+                                    print(
+                                        f"[*] Repaired binary entry for {file} from log."
                                     )
-                                    if match:
-                                        row[1] = match.group(1)
-                                        cleaned_something = True
-                                        print(
-                                            f"[*] Recovered objective {row[1]} for {file_name} from log."
-                                        )
-                                    else:
-                                        is_valid = False
-                        else:
-                            is_valid = False
-                    elif os.path.exists(log_path):
+                                else:
+                                    del csv_data[abs_path]
+                                    synced_something = True
+                    else:
+                        del csv_data[abs_path]
+                        synced_something = True
+                else:
+                    # Looks like a valid number, just confirm it wasn't interrupted at the last second
+                    if os.path.exists(log_path):
                         with open(log_path, "r", errors="ignore") as log_f:
                             if "Solve interrupted" in log_f.read():
-                                is_valid = False
+                                del csv_data[abs_path]
+                                synced_something = True
 
-                    if is_valid:
-                        valid_rows.append(row)
-                    else:
-                        cleaned_something = True
+            # Scenario B: Missing from CSV entirely. Check if a log exists!
+            else:
+                if os.path.exists(log_path):
+                    with open(log_path, "r", errors="ignore") as log_f:
+                        log_content = log_f.read()
 
-        if cleaned_something:
-            print(
-                f"[*] Scrubbing complete: Removed interrupted runs and repaired binary entries."
-            )
-            with open(csv_path, mode="w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerows(valid_rows)
+                        if "Solve interrupted" in log_content:
+                            # It's an orphaned bad run. Delete the log so it restarts clean.
+                            print(
+                                f"[*] Removing orphaned interrupted log for {file}..."
+                            )
+                            os.remove(log_path)
+                            txt_out_path = os.path.join(out_dir, file)
+                            if os.path.exists(txt_out_path):
+                                os.remove(txt_out_path)
+                        else:
+                            # Found a successful run missing from the CSV! Add it.
+                            match = re.search(
+                                r"Objective Value:\s*([-\d\.]+)", log_content
+                            )
+                            if match:
+                                csv_data[abs_path] = match.group(1)
+                                synced_something = True
+                                print(
+                                    f"[*] Recovered missing objective {csv_data[abs_path]} for {file} from log."
+                                )
 
-    file_exists = os.path.exists(csv_path)
+    # Rewrite the CSV if anything was recovered, repaired, or deleted.
+    if synced_something or not os.path.exists(csv_path):
+        if synced_something:
+            print("[*] Synchronization complete: CSV is now up-to-date with log files.")
+        with open(csv_path, mode="w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Absolute Path", "Objective Value"])
+            for p, v in csv_data.items():
+                writer.writerow([p, v])
 
+    # --- PHASE 2: PROCESSING LOOP ---
     with open(csv_path, mode="a", newline="") as f:
         writer = csv.writer(f)
 
-        if not file_exists:
-            writer.writerow(["Absolute Path", "Objective Value"])
-
         for root, dirs, files in os.walk(in_dir):
             for file in files:
-                if not file.endswith(".txt"):
+                if not file.endswith(".txt") or file == output_csv:
                     continue
 
-                if file == output_csv:
+                abs_path = os.path.abspath(os.path.join(root, file))
+
+                # Because of Phase 1, if it's in csv_data, we know it's 100% finished and valid
+                if abs_path in csv_data:
+                    print(f"Skipping already completed file: {file}")
                     continue
 
-                file_name = os.path.join(root, file)
-                abs_path = os.path.abspath(file_name)
-
-                log_file_name = f"{file.split('.')[0]}.log"
-                expected_log_path = os.path.join(out_dir, log_file_name)
-
-                if os.path.exists(expected_log_path):
-                    with open(expected_log_path, "r", errors="ignore") as log_f:
-                        log_content = log_f.read()
-
-                    if "Solve interrupted" in log_content:
-                        print(
-                            f"Removing interrupted log for {file_name} and restarting..."
-                        )
-                        os.remove(expected_log_path)
-                        txt_out_path = os.path.join(out_dir, file)
-                        if os.path.exists(txt_out_path):
-                            os.remove(txt_out_path)
-                    else:
-                        print(f"Skipping already processed file: {file_name}")
-                        continue
-
-                print(f"\nProcessing: {file_name}")
+                print(f"\nProcessing: {file}")
                 try:
-                    obj_val = single_shot_instance(file_name, time_limit, out_dir)
+                    obj_val = single_shot_instance(
+                        file_name=os.path.join(root, file),
+                        time_limit=time_limit,
+                        out_dir=out_dir,
+                    )
 
                     if obj_val == "INTERRUPTED":
                         print("\n[!] Run stopped by user. Halting batch safely.")
                         break
 
                     writer.writerow([abs_path, obj_val])
+                    # Live-update our dictionary so we don't accidentally process it again
+                    csv_data[abs_path] = obj_val
                 except KeyboardInterrupt:
                     print("\n[!] Run stopped by user. Halting batch safely.")
                     break
                 except Exception as e:
-                    print(f"Failed {file_name} due to error: {e}")
+                    print(f"Failed {file} due to error: {e}")
                     writer.writerow([abs_path, f"ERROR: {e}"])
 
                 f.flush()
