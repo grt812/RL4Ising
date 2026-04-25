@@ -103,7 +103,7 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
             header = next(reader, None)
             if header:
                 valid_rows.append(header)
-            
+
             for row in reader:
                 if len(row) >= 2:
                     val = str(row[1]).strip()
@@ -113,10 +113,159 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                     log_path = os.path.join(out_dir, log_file_name)
 
                     is_valid = True
-                    is_binary = all(c in '01' for c in val) and len(val) >= 8
-                    
+                    is_binary = all(c in "01" for c in val) and len(val) >= 8
+
                     if "INTERRUPTED" in val or "ERROR" in val:
                         is_valid = False
                     elif is_binary:
                         if os.path.exists(log_path):
-                            with open(log_path, "r", errors="ignore") as log
+                            with open(log_path, "r", errors="ignore") as log_f:
+                                log_content = log_f.read()
+                                if "Solve interrupted" in log_content:
+                                    is_valid = False
+                                else:
+                                    # Target the exact printed string to avoid scientific notation
+                                    match = re.search(
+                                        r"Objective Value:\s*([-\d\.]+)", log_content
+                                    )
+                                    if match:
+                                        row[1] = match.group(1)
+                                        cleaned_something = True
+                                        print(
+                                            f"[*] Recovered objective {row[1]} for {file_name} from log."
+                                        )
+                                    else:
+                                        is_valid = False
+                        else:
+                            is_valid = False
+                    elif os.path.exists(log_path):
+                        with open(log_path, "r", errors="ignore") as log_f:
+                            if "Solve interrupted" in log_f.read():
+                                is_valid = False
+
+                    if is_valid:
+                        valid_rows.append(row)
+                    else:
+                        cleaned_something = True
+
+        if cleaned_something:
+            print(
+                f"[*] Scrubbing complete: Removed interrupted runs and repaired binary entries."
+            )
+            with open(csv_path, mode="w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerows(valid_rows)
+
+    file_exists = os.path.exists(csv_path)
+
+    with open(csv_path, mode="a", newline="") as f:
+        writer = csv.writer(f)
+
+        if not file_exists:
+            writer.writerow(["Absolute Path", "Objective Value"])
+
+        for root, dirs, files in os.walk(in_dir):
+            for file in files:
+                if not file.endswith(".txt"):
+                    continue
+
+                if file == output_csv:
+                    continue
+
+                file_name = os.path.join(root, file)
+                abs_path = os.path.abspath(file_name)
+
+                log_file_name = f"{file.split('.')[0]}.log"
+                expected_log_path = os.path.join(out_dir, log_file_name)
+
+                if os.path.exists(expected_log_path):
+                    with open(expected_log_path, "r", errors="ignore") as log_f:
+                        log_content = log_f.read()
+
+                    if "Solve interrupted" in log_content:
+                        print(
+                            f"Removing interrupted log for {file_name} and restarting..."
+                        )
+                        os.remove(expected_log_path)
+                        txt_out_path = os.path.join(out_dir, file)
+                        if os.path.exists(txt_out_path):
+                            os.remove(txt_out_path)
+                    else:
+                        print(f"Skipping already processed file: {file_name}")
+                        continue
+
+                print(f"\nProcessing: {file_name}")
+                try:
+                    obj_val = single_shot_instance(file_name, time_limit, out_dir)
+
+                    if obj_val == "INTERRUPTED":
+                        print("\n[!] Run stopped by user. Halting batch safely.")
+                        break
+
+                    writer.writerow([abs_path, obj_val])
+                except KeyboardInterrupt:
+                    print("\n[!] Run stopped by user. Halting batch safely.")
+                    break
+                except Exception as e:
+                    print(f"Failed {file_name} due to error: {e}")
+                    writer.writerow([abs_path, f"ERROR: {e}"])
+
+                f.flush()
+
+    print(f"\nBatch processing complete. Results saved to '{csv_path}'.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Run Gurobi MaxCut QUBO solver on graphs."
+    )
+
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        default=["../../src/data/1D/VNA/Chain/32/ising_chain_32_seed1.txt"],
+        help="One or more file paths to process. Defaults to a specific test file if omitted.",
+    )
+
+    parser.add_argument(
+        "-t",
+        "--time_limit",
+        type=int,
+        default=3600,
+        help="Time limit for the solver in seconds (default: 3600).",
+    )
+
+    parser.add_argument(
+        "-i",
+        "--in_dir",
+        type=str,
+        help="Input directory. Process all .txt files in this folder.",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--out_dir",
+        type=str,
+        default="results/gurobi/newest",
+        help="Output directory for logs, individual text files, and the CSV.",
+    )
+
+    parser.add_argument(
+        "--csv_out",
+        type=str,
+        default="gurobi_batch_results.csv",
+        help="Name of the output CSV file (saved inside out_dir).",
+    )
+
+    args = parser.parse_args()
+
+    if args.in_dir:
+        directory_shot_instance(
+            args.in_dir, args.time_limit, args.out_dir, args.csv_out
+        )
+    elif len(args.paths) == 1:
+        single_shot_instance(args.paths[0], args.time_limit, args.out_dir)
+    elif len(args.paths) > 1:
+        multiple_shot_instance(args.paths, args.time_limit, args.out_dir)
+    else:
+        print("No paths or directories were provided.")
