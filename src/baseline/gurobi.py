@@ -40,7 +40,6 @@ def save_to_file(model, file_name, time_limit, out_dir, print_terminal=True):
         print(f"Best Solution Encoded: {best_encoded}")
         print(f"Best Solution Raw: {best_solution}\n")
 
-    # Returning obj_val instead of best_solution
     return obj_val
 
 
@@ -69,7 +68,6 @@ def gurobi_solve(graph, file_name, time_limit, out_dir):
 
     model.optimize()
 
-    # Catch the interrupt flag and stop saving
     if model.Status == gp.GRB.INTERRUPTED:
         return "INTERRUPTED"
 
@@ -95,6 +93,48 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
         os.makedirs(out_dir)
 
     csv_path = os.path.join(out_dir, output_csv)
+
+    # --- CSV SCRUBBING PHASE ---
+    if os.path.exists(csv_path):
+        valid_rows = []
+        cleaned_something = False
+        with open(csv_path, mode="r", newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if header:
+                valid_rows.append(header)
+
+            for row in reader:
+                if len(row) >= 2:
+                    val = str(row[1])
+                    abs_path = row[0]
+                    file_name = os.path.basename(abs_path)
+                    log_file_name = f"{file_name.split('.')[0]}.log"
+                    log_path = os.path.join(out_dir, log_file_name)
+
+                    is_valid = True
+
+                    if "INTERRUPTED" in val or "ERROR" in val:
+                        is_valid = False
+                    elif os.path.exists(log_path):
+                        with open(log_path, "r", errors="ignore") as log_f:
+                            if "Solve interrupted" in log_f.read():
+                                is_valid = False
+
+                    if is_valid:
+                        valid_rows.append(row)
+                    else:
+                        cleaned_something = True
+
+        if cleaned_something:
+            print(
+                f"\n[*] Scrubbing existing CSV: Removed interrupted or incomplete runs."
+            )
+            with open(csv_path, mode="w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerows(valid_rows)
+    # ---------------------------
+
     file_exists = os.path.exists(csv_path)
 
     with open(csv_path, mode="a", newline="") as f:
@@ -121,7 +161,6 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                     with open(expected_log_path, "r", errors="ignore") as log_f:
                         log_content = log_f.read()
 
-                    # Check for an interrupted run
                     if "Solve interrupted" in log_content:
                         print(
                             f"Removing interrupted log for {file_name} and restarting..."
@@ -131,9 +170,7 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                         if os.path.exists(txt_out_path):
                             os.remove(txt_out_path)
                     else:
-                        print(
-                            f"Skipping already processed file (log found): {file_name}"
-                        )
+                        print(f"Skipping already processed file: {file_name}")
                         continue
 
                 print(f"\nProcessing: {file_name}")
