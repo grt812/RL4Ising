@@ -1,7 +1,5 @@
 import networkx as nx
-import numpy as np
 import os
-import math
 import gurobipy as gp
 import argparse
 import csv
@@ -230,13 +228,13 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
 
                     if obj_val == "INTERRUPTED":
                         print("\n[!] Run stopped by user. Halting batch safely.")
-                        break
+                        return
 
                     writer.writerow([abs_path, obj_val])
                     csv_data[abs_path] = obj_val
                 except KeyboardInterrupt:
                     print("\n[!] Run stopped by user. Halting batch safely.")
-                    break
+                    return
                 except Exception as e:
                     error_str = str(e).lower()
                     if "size-limited" in error_str or "too large" in error_str:
