@@ -95,7 +95,6 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
 
     csv_path = os.path.join(out_dir, output_csv)
 
-    # --- CSV SCRUBBING PHASE ---
     if os.path.exists(csv_path):
         valid_rows = []
         cleaned_something = False
@@ -114,16 +113,10 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                     log_path = os.path.join(out_dir, log_file_name)
 
                     is_valid = True
-                    # Check if the value is purely a binary string 
                     is_binary = all(c in '01' for c in val) and len(val) >= 8
                     
                     if "INTERRUPTED" in val or "ERROR" in val:
                         is_valid = False
                     elif is_binary:
                         if os.path.exists(log_path):
-                            with open(log_path, "r", errors="ignore") as log_f:
-                                log_content = log_f.read()
-                                if "Solve interrupted" in log_content:
-                                    is_valid = False
-                                else:
-                                    # Extract the
+                            with open(log_path, "r", errors="ignore") as log
