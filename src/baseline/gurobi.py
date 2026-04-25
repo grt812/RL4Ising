@@ -40,6 +40,7 @@ def save_to_file(model, file_name, time_limit, out_dir, print_terminal=True):
         print(f"Best Solution Encoded: {best_encoded}")
         print(f"Best Solution Raw: {best_solution}\n")
 
+    # Returning obj_val instead of best_solution
     return obj_val
 
 
@@ -67,6 +68,10 @@ def gurobi_solve(graph, file_name, time_limit, out_dir):
     model.Params.LogFile = os.path.join(out_dir, f"{base_name.split('.')[0]}.log")
 
     model.optimize()
+
+    # Catch the interrupt flag and stop saving
+    if model.Status == gp.GRB.INTERRUPTED:
+        return "INTERRUPTED"
 
     return save_to_file(model, file_name, time_limit, out_dir)
 
@@ -96,7 +101,7 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
         writer = csv.writer(f)
 
         if not file_exists:
-            writer.writerow(["Absolute Path", "Best Solution Raw"])
+            writer.writerow(["Absolute Path", "Objective Value"])
 
         for root, dirs, files in os.walk(in_dir):
             for file in files:
@@ -109,18 +114,40 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                 file_name = os.path.join(root, file)
                 abs_path = os.path.abspath(file_name)
 
-                # Check if the log file already exists in the output directory
                 log_file_name = f"{file.split('.')[0]}.log"
                 expected_log_path = os.path.join(out_dir, log_file_name)
 
                 if os.path.exists(expected_log_path):
-                    print(f"Skipping already processed file (log found): {file_name}")
-                    continue
+                    with open(expected_log_path, "r", errors="ignore") as log_f:
+                        log_content = log_f.read()
+
+                    # Check for an interrupted run
+                    if "Solve interrupted" in log_content:
+                        print(
+                            f"Removing interrupted log for {file_name} and restarting..."
+                        )
+                        os.remove(expected_log_path)
+                        txt_out_path = os.path.join(out_dir, file)
+                        if os.path.exists(txt_out_path):
+                            os.remove(txt_out_path)
+                    else:
+                        print(
+                            f"Skipping already processed file (log found): {file_name}"
+                        )
+                        continue
 
                 print(f"\nProcessing: {file_name}")
                 try:
-                    best_solution = single_shot_instance(file_name, time_limit, out_dir)
-                    writer.writerow([abs_path, best_solution])
+                    obj_val = single_shot_instance(file_name, time_limit, out_dir)
+
+                    if obj_val == "INTERRUPTED":
+                        print("\n[!] Run stopped by user. Halting batch safely.")
+                        break
+
+                    writer.writerow([abs_path, obj_val])
+                except KeyboardInterrupt:
+                    print("\n[!] Run stopped by user. Halting batch safely.")
+                    break
                 except Exception as e:
                     print(f"Failed {file_name} due to error: {e}")
                     writer.writerow([abs_path, f"ERROR: {e}"])
