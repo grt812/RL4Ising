@@ -94,21 +94,19 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
         os.makedirs(out_dir)
 
     csv_path = os.path.join(out_dir, output_csv)
-    csv_data = {}  # Store existing valid rows here
+    csv_data = {}
 
-    # --- PHASE 1: CSV & LOG SYNCHRONIZATION ---
-    # Load whatever is currently in the CSV
+    # Sync logs
     if os.path.exists(csv_path):
         with open(csv_path, mode="r", newline="") as f:
             reader = csv.reader(f)
-            next(reader, None)  # Skip header
+            next(reader, None)
             for row in reader:
                 if len(row) >= 2:
                     csv_data[row[0]] = str(row[1]).strip()
 
     synced_something = False
 
-    # Walk input files to cross-check against logs and CSV
     for root, dirs, files in os.walk(in_dir):
         for file in files:
             if not file.endswith(".txt") or file == output_csv:
@@ -118,19 +116,29 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
             log_file_name = f"{file.split('.')[0]}.log"
             log_path = os.path.join(out_dir, log_file_name)
 
-            # Scenario A: The file is already in the CSV. We validate it.
             if abs_path in csv_data:
                 val = csv_data[abs_path]
                 is_binary = all(c in "01" for c in val) and len(val) >= 8
 
-                if "INTERRUPTED" in val or "ERROR" in val:
+                # If it's a license limit, we leave it alone so it gets skipped.
+                if "LICENSE_LIMIT" in val or "size-limited" in val.lower():
+                    csv_data[abs_path] = "LICENSE_LIMIT"
+
+                elif "INTERRUPTED" in val or "ERROR" in val:
                     del csv_data[abs_path]
                     synced_something = True
+
                 elif is_binary:
                     if os.path.exists(log_path):
                         with open(log_path, "r", errors="ignore") as log_f:
                             log_content = log_f.read()
-                            if "Solve interrupted" in log_content:
+                            if (
+                                "size-limited" in log_content.lower()
+                                or "too large" in log_content.lower()
+                            ):
+                                csv_data[abs_path] = "LICENSE_LIMIT"
+                                synced_something = True
+                            elif "Solve interrupted" in log_content:
                                 del csv_data[abs_path]
                                 synced_something = True
                             else:
@@ -150,21 +158,27 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                         del csv_data[abs_path]
                         synced_something = True
                 else:
-                    # Looks like a valid number, just confirm it wasn't interrupted at the last second
                     if os.path.exists(log_path):
                         with open(log_path, "r", errors="ignore") as log_f:
                             if "Solve interrupted" in log_f.read():
                                 del csv_data[abs_path]
                                 synced_something = True
 
-            # Scenario B: Missing from CSV entirely. Check if a log exists!
             else:
                 if os.path.exists(log_path):
                     with open(log_path, "r", errors="ignore") as log_f:
                         log_content = log_f.read()
 
-                        if "Solve interrupted" in log_content:
-                            # It's an orphaned bad run. Delete the log so it restarts clean.
+                        if (
+                            "size-limited" in log_content.lower()
+                            or "too large" in log_content.lower()
+                        ):
+                            csv_data[abs_path] = "LICENSE_LIMIT"
+                            synced_something = True
+                            print(
+                                f"[*] Marked size-limited license error for {file}. Will not retry."
+                            )
+                        elif "Solve interrupted" in log_content:
                             print(
                                 f"[*] Removing orphaned interrupted log for {file}..."
                             )
@@ -173,7 +187,6 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                             if os.path.exists(txt_out_path):
                                 os.remove(txt_out_path)
                         else:
-                            # Found a successful run missing from the CSV! Add it.
                             match = re.search(
                                 r"Objective Value:\s*([-\d\.]+)", log_content
                             )
@@ -184,7 +197,6 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                                     f"[*] Recovered missing objective {csv_data[abs_path]} for {file} from log."
                                 )
 
-    # Rewrite the CSV if anything was recovered, repaired, or deleted.
     if synced_something or not os.path.exists(csv_path):
         if synced_something:
             print("[*] Synchronization complete: CSV is now up-to-date with log files.")
@@ -205,9 +217,11 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
 
                 abs_path = os.path.abspath(os.path.join(root, file))
 
-                # Because of Phase 1, if it's in csv_data, we know it's 100% finished and valid
                 if abs_path in csv_data:
-                    print(f"Skipping already completed file: {file}")
+                    # Won't print skip messages for LICENSE_LIMIT to keep terminal clean,
+                    # but it will safely ignore them.
+                    if csv_data[abs_path] != "LICENSE_LIMIT":
+                        print(f"Skipping already completed file: {file}")
                     continue
 
                 print(f"\nProcessing: {file}")
@@ -223,14 +237,19 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                         break
 
                     writer.writerow([abs_path, obj_val])
-                    # Live-update our dictionary so we don't accidentally process it again
                     csv_data[abs_path] = obj_val
                 except KeyboardInterrupt:
                     print("\n[!] Run stopped by user. Halting batch safely.")
                     break
                 except Exception as e:
-                    print(f"Failed {file} due to error: {e}")
-                    writer.writerow([abs_path, f"ERROR: {e}"])
+                    error_str = str(e).lower()
+                    if "size-limited" in error_str or "too large" in error_str:
+                        print(f"Skipped {file} permanently due to license size limit.")
+                        writer.writerow([abs_path, "LICENSE_LIMIT"])
+                        csv_data[abs_path] = "LICENSE_LIMIT"
+                    else:
+                        print(f"Failed {file} due to error: {e}")
+                        writer.writerow([abs_path, f"ERROR: {e}"])
 
                 f.flush()
 
