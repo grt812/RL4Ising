@@ -40,7 +40,7 @@ def save_to_file(model, file_name, time_limit, out_dir, print_terminal=True):
         print(f"Best Solution Encoded: {best_encoded}")
         print(f"Best Solution Raw: {best_solution}\n")
 
-    return best_solution
+    return obj_val
 
 
 def gurobi_solve(graph, file_name, time_limit, out_dir):
@@ -90,17 +90,8 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
         os.makedirs(out_dir)
 
     csv_path = os.path.join(out_dir, output_csv)
-    processed_files = set()
-
-    if os.path.exists(csv_path):
-        with open(csv_path, mode="r", newline="") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2 and "ERROR" not in row[1]:
-                    processed_files.add(row[0])
-
     file_exists = os.path.exists(csv_path)
+
     with open(csv_path, mode="a", newline="") as f:
         writer = csv.writer(f)
 
@@ -118,8 +109,12 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                 file_name = os.path.join(root, file)
                 abs_path = os.path.abspath(file_name)
 
-                if abs_path in processed_files:
-                    print(f"Skipping already processed file: {file_name}")
+                # Check if the log file already exists in the output directory
+                log_file_name = f"{file.split('.')[0]}.log"
+                expected_log_path = os.path.join(out_dir, log_file_name)
+
+                if os.path.exists(expected_log_path):
+                    print(f"Skipping already processed file (log found): {file_name}")
                     continue
 
                 print(f"\nProcessing: {file_name}")
