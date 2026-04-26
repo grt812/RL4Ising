@@ -1,5 +1,7 @@
 import networkx as nx
+import numpy as np
 import os
+import math
 import gurobipy as gp
 import argparse
 import csv
@@ -70,7 +72,12 @@ def gurobi_solve(graph, file_name, time_limit, out_dir):
     if model.Status == gp.GRB.INTERRUPTED:
         return "INTERRUPTED"
 
-    return save_to_file(model, file_name, time_limit, out_dir)
+    obj_val = save_to_file(model, file_name, time_limit, out_dir)
+
+    if model.Status == gp.GRB.TIME_LIMIT:
+        return f"{obj_val} (TIMEOUT)"
+
+    return obj_val
 
 
 def single_shot_instance(file_name, time_limit, out_dir):
@@ -115,9 +122,11 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
 
             if abs_path in csv_data:
                 val = csv_data[abs_path]
-                is_binary = all(c in "01" for c in val) and len(val) >= 8
+                is_binary = (
+                    all(c in "01" for c in val.replace(" (TIMEOUT)", ""))
+                    and len(val.replace(" (TIMEOUT)", "")) >= 8
+                )
 
-                # Skip license limit
                 if "LICENSE_LIMIT" in val or "size-limited" in val.lower():
                     csv_data[abs_path] = "LICENSE_LIMIT"
 
@@ -143,11 +152,11 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                                     r"Objective Value:\s*([-\d\.]+)", log_content
                                 )
                                 if match:
-                                    csv_data[abs_path] = match.group(1)
+                                    obj_val = match.group(1)
+                                    if "Time limit reached" in log_content:
+                                        obj_val += " (TIMEOUT)"
+                                    csv_data[abs_path] = obj_val
                                     synced_something = True
-                                    print(
-                                        f"[*] Repaired binary entry for {file} from log."
-                                    )
                                 else:
                                     del csv_data[abs_path]
                                     synced_something = True
@@ -157,8 +166,15 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                 else:
                     if os.path.exists(log_path):
                         with open(log_path, "r", errors="ignore") as log_f:
-                            if "Solve interrupted" in log_f.read():
+                            log_content = log_f.read()
+                            if "Solve interrupted" in log_content:
                                 del csv_data[abs_path]
+                                synced_something = True
+                            elif (
+                                "Time limit reached" in log_content
+                                and "(TIMEOUT)" not in val
+                            ):
+                                csv_data[abs_path] = f"{val} (TIMEOUT)"
                                 synced_something = True
 
             else:
@@ -172,13 +188,7 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                         ):
                             csv_data[abs_path] = "LICENSE_LIMIT"
                             synced_something = True
-                            print(
-                                f"[*] Marked size-limited license error for {file}. Will not retry."
-                            )
                         elif "Solve interrupted" in log_content:
-                            print(
-                                f"[*] Removing orphaned interrupted log for {file}..."
-                            )
                             os.remove(log_path)
                             txt_out_path = os.path.join(out_dir, file)
                             if os.path.exists(txt_out_path):
@@ -188,15 +198,13 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                                 r"Objective Value:\s*([-\d\.]+)", log_content
                             )
                             if match:
-                                csv_data[abs_path] = match.group(1)
+                                obj_val = match.group(1)
+                                if "Time limit reached" in log_content:
+                                    obj_val += " (TIMEOUT)"
+                                csv_data[abs_path] = obj_val
                                 synced_something = True
-                                print(
-                                    f"[*] Recovered missing objective {csv_data[abs_path]} for {file} from log."
-                                )
 
     if synced_something or not os.path.exists(csv_path):
-        if synced_something:
-            print("[*] Synchronization complete: CSV is now up-to-date with log files.")
         with open(csv_path, mode="w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["Absolute Path", "Objective Value"])
@@ -214,8 +222,6 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                 abs_path = os.path.abspath(os.path.join(root, file))
 
                 if abs_path in csv_data:
-                    if csv_data[abs_path] != "LICENSE_LIMIT":
-                        print(f"Skipping already completed file: {file}")
                     continue
 
                 print(f"\nProcessing: {file}")
@@ -238,11 +244,9 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                 except Exception as e:
                     error_str = str(e).lower()
                     if "size-limited" in error_str or "too large" in error_str:
-                        print(f"Skipped {file} permanently due to license size limit.")
                         writer.writerow([abs_path, "LICENSE_LIMIT"])
                         csv_data[abs_path] = "LICENSE_LIMIT"
                     else:
-                        print(f"Failed {file} due to error: {e}")
                         writer.writerow([abs_path, f"ERROR: {e}"])
 
                 f.flush()
