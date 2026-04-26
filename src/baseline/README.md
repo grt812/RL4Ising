@@ -34,6 +34,7 @@ python script.py -i src/data/graphs -o results/gurobi/newest --csv_out batch_res
 | -i | --in_dir | None | Input directory. Processes all .txt files found inside. |
 | -o | --out_dir | results/gurobi/newest | Output directory. All .log files, individual .txt solution files, and the CSV are saved here. Creates the folder if it does not exist. |
 | N/A | --csv_out | gurobi_batch_results.csv | The name of the aggregate CSV file. It is saved directly inside the --out_dir. |
+| N/A   | --retry_license | False | Retry entries that previously failed due to license limits. |
 
 ### Output Structure
 
