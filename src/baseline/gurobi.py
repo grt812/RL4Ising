@@ -88,7 +88,9 @@ def multiple_shot_instance(file_names, time_limit, out_dir):
         single_shot_instance(file_name, time_limit, out_dir)
 
 
-def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
+def directory_shot_instance(
+    in_dir, time_limit, out_dir, output_csv, retry_license=False
+):
     if not os.path.isdir(in_dir):
         print(f"\n[!] ERROR: The input directory '{in_dir}' does not exist.")
         return
@@ -154,9 +156,12 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                     and len(val.replace(" (TIMEOUT)", "")) >= 8
                 )
 
-                # Skip license limit
                 if "LICENSE_LIMIT" in val or "size-limited" in val.lower():
-                    csv_data[abs_path] = "LICENSE_LIMIT"
+                    if retry_license:
+                        del csv_data[abs_path]
+                        synced_something = True
+                    else:
+                        csv_data[abs_path] = "LICENSE_LIMIT"
 
                 elif "INTERRUPTED" in val or "ERROR" in val:
                     del csv_data[abs_path]
@@ -170,8 +175,12 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                                 "size-limited" in log_content.lower()
                                 or "too large" in log_content.lower()
                             ):
-                                csv_data[abs_path] = "LICENSE_LIMIT"
-                                synced_something = True
+                                if retry_license:
+                                    del csv_data[abs_path]
+                                    synced_something = True
+                                else:
+                                    csv_data[abs_path] = "LICENSE_LIMIT"
+                                    synced_something = True
                             elif "Solve interrupted" in log_content:
                                 del csv_data[abs_path]
                                 synced_something = True
@@ -214,8 +223,14 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                             "size-limited" in log_content.lower()
                             or "too large" in log_content.lower()
                         ):
-                            csv_data[abs_path] = "LICENSE_LIMIT"
-                            synced_something = True
+                            if retry_license:
+                                os.remove(log_path)
+                                txt_out_path = os.path.join(out_dir, file)
+                                if os.path.exists(txt_out_path):
+                                    os.remove(txt_out_path)
+                            else:
+                                csv_data[abs_path] = "LICENSE_LIMIT"
+                                synced_something = True
                         elif "Solve interrupted" in log_content:
                             os.remove(log_path)
                             txt_out_path = os.path.join(out_dir, file)
@@ -324,11 +339,17 @@ if __name__ == "__main__":
         help="Name of the output CSV file (saved inside out_dir).",
     )
 
+    parser.add_argument(
+        "--retry_license",
+        action="store_true",
+        help="Retry entries that previously failed due to license limits.",
+    )
+
     args = parser.parse_args()
 
     if args.in_dir:
         directory_shot_instance(
-            args.in_dir, args.time_limit, args.out_dir, args.csv_out
+            args.in_dir, args.time_limit, args.out_dir, args.csv_out, args.retry_license
         )
     elif len(args.paths) == 1:
         single_shot_instance(args.paths[0], args.time_limit, args.out_dir)
