@@ -1,7 +1,5 @@
 import networkx as nx
-import numpy as np
 import os
-import math
 import gurobipy as gp
 import argparse
 import csv
@@ -100,6 +98,7 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
 
     csv_path = os.path.join(out_dir, output_csv)
     csv_data = {}
+    synced_something = False
 
     if os.path.exists(csv_path):
         with open(csv_path, mode="r", newline="") as f:
@@ -107,9 +106,37 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
             next(reader, None)
             for row in reader:
                 if len(row) >= 2:
-                    csv_data[row[0]] = str(row[1]).strip()
+                    abs_path = row[0]
+                    new_val = str(row[1]).strip()
 
-    synced_something = False
+                    if abs_path in csv_data:
+                        old_val = csv_data[abs_path]
+                        if old_val == new_val:
+                            synced_something = True
+                        else:
+                            print(
+                                f"\n[!] DUPLICATE CONFLICT: {os.path.basename(abs_path)}"
+                            )
+                            print(f"    1: Keep First Value  -> {old_val}")
+                            print(f"    2: Keep Second Value -> {new_val}")
+                            print(f"    3: Delete Both (forces rerun)")
+                            while True:
+                                choice = input("Choose an option (1/2/3): ").strip()
+                                if choice == "1":
+                                    synced_something = True
+                                    break
+                                elif choice == "2":
+                                    csv_data[abs_path] = new_val
+                                    synced_something = True
+                                    break
+                                elif choice == "3":
+                                    del csv_data[abs_path]
+                                    synced_something = True
+                                    break
+                                else:
+                                    print("Invalid input. Please enter 1, 2, or 3.")
+                    else:
+                        csv_data[abs_path] = new_val
 
     for root, dirs, files in os.walk(in_dir):
         for file in files:
@@ -127,6 +154,7 @@ def directory_shot_instance(in_dir, time_limit, out_dir, output_csv):
                     and len(val.replace(" (TIMEOUT)", "")) >= 8
                 )
 
+                # Skip license limit
                 if "LICENSE_LIMIT" in val or "size-limited" in val.lower():
                     csv_data[abs_path] = "LICENSE_LIMIT"
 
