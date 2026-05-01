@@ -89,7 +89,7 @@ def multiple_shot_instance(file_names, time_limit, out_dir):
 
 
 def directory_shot_instance(
-    in_dir, time_limit, out_dir, output_csv, retry_license=False
+    in_dir, time_limit, out_dir, output_csv, retry_license=False, retry_timeouts=False
 ):
     if not os.path.isdir(in_dir):
         print(f"\n[!] ERROR: The input directory '{in_dir}' does not exist.")
@@ -163,6 +163,10 @@ def directory_shot_instance(
                     else:
                         csv_data[abs_path] = "LICENSE_LIMIT"
 
+                elif "(TIMEOUT)" in val and retry_timeouts:
+                    del csv_data[abs_path]
+                    synced_something = True
+
                 elif "INTERRUPTED" in val or "ERROR" in val:
                     del csv_data[abs_path]
                     synced_something = True
@@ -182,6 +186,9 @@ def directory_shot_instance(
                                     csv_data[abs_path] = "LICENSE_LIMIT"
                                     synced_something = True
                             elif "Solve interrupted" in log_content:
+                                del csv_data[abs_path]
+                                synced_something = True
+                            elif "Time limit reached" in log_content and retry_timeouts:
                                 del csv_data[abs_path]
                                 synced_something = True
                             else:
@@ -207,12 +214,13 @@ def directory_shot_instance(
                             if "Solve interrupted" in log_content:
                                 del csv_data[abs_path]
                                 synced_something = True
-                            elif (
-                                "Time limit reached" in log_content
-                                and "(TIMEOUT)" not in val
-                            ):
-                                csv_data[abs_path] = f"{val} (TIMEOUT)"
-                                synced_something = True
+                            elif "Time limit reached" in log_content:
+                                if retry_timeouts:
+                                    del csv_data[abs_path]
+                                    synced_something = True
+                                elif "(TIMEOUT)" not in val:
+                                    csv_data[abs_path] = f"{val} (TIMEOUT)"
+                                    synced_something = True
 
             else:
                 if os.path.exists(log_path):
@@ -232,6 +240,11 @@ def directory_shot_instance(
                                 csv_data[abs_path] = "LICENSE_LIMIT"
                                 synced_something = True
                         elif "Solve interrupted" in log_content:
+                            os.remove(log_path)
+                            txt_out_path = os.path.join(out_dir, file)
+                            if os.path.exists(txt_out_path):
+                                os.remove(txt_out_path)
+                        elif "Time limit reached" in log_content and retry_timeouts:
                             os.remove(log_path)
                             txt_out_path = os.path.join(out_dir, file)
                             if os.path.exists(txt_out_path):
@@ -345,11 +358,22 @@ if __name__ == "__main__":
         help="Retry entries that previously failed due to license limits.",
     )
 
+    parser.add_argument(
+        "--retry_timeouts",
+        action="store_true",
+        help="Retry entries that previously hit the time limit.",
+    )
+
     args = parser.parse_args()
 
     if args.in_dir:
         directory_shot_instance(
-            args.in_dir, args.time_limit, args.out_dir, args.csv_out, args.retry_license
+            args.in_dir,
+            args.time_limit,
+            args.out_dir,
+            args.csv_out,
+            args.retry_license,
+            args.retry_timeouts,
         )
     elif len(args.paths) == 1:
         single_shot_instance(args.paths[0], args.time_limit, args.out_dir)
