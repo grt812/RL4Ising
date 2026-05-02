@@ -141,13 +141,16 @@ def directory_shot_instance(
                         csv_data[abs_path] = new_val
 
     for root, dirs, files in os.walk(in_dir):
+        rel_path = os.path.relpath(root, in_dir)
+        current_out_dir = os.path.join(out_dir, rel_path)
+
         for file in files:
             if not file.endswith(".txt") or file == output_csv:
                 continue
 
             abs_path = os.path.abspath(os.path.join(root, file))
             log_file_name = f"{file.split('.')[0]}.log"
-            log_path = os.path.join(out_dir, log_file_name)
+            log_path = os.path.join(current_out_dir, log_file_name)
 
             if abs_path in csv_data:
                 val = csv_data[abs_path]
@@ -233,7 +236,7 @@ def directory_shot_instance(
                         ):
                             if retry_license:
                                 os.remove(log_path)
-                                txt_out_path = os.path.join(out_dir, file)
+                                txt_out_path = os.path.join(current_out_dir, file)
                                 if os.path.exists(txt_out_path):
                                     os.remove(txt_out_path)
                             else:
@@ -241,12 +244,12 @@ def directory_shot_instance(
                                 synced_something = True
                         elif "Solve interrupted" in log_content:
                             os.remove(log_path)
-                            txt_out_path = os.path.join(out_dir, file)
+                            txt_out_path = os.path.join(current_out_dir, file)
                             if os.path.exists(txt_out_path):
                                 os.remove(txt_out_path)
                         elif "Time limit reached" in log_content and retry_timeouts:
                             os.remove(log_path)
-                            txt_out_path = os.path.join(out_dir, file)
+                            txt_out_path = os.path.join(current_out_dir, file)
                             if os.path.exists(txt_out_path):
                                 os.remove(txt_out_path)
                         else:
@@ -277,6 +280,11 @@ def directory_shot_instance(
 
         for root, dirs, files in os.walk(in_dir):
             abs_root = os.path.abspath(root)
+            rel_path = os.path.relpath(root, in_dir)
+            current_out_dir = os.path.join(out_dir, rel_path)
+
+            if not os.path.exists(current_out_dir):
+                os.makedirs(current_out_dir)
 
             if abs_root in timed_out_folders:
                 unprocessed_count = sum(
@@ -306,7 +314,7 @@ def directory_shot_instance(
                     obj_val = single_shot_instance(
                         file_name=os.path.join(root, file),
                         time_limit=time_limit,
-                        out_dir=out_dir,
+                        out_dir=current_out_dir,
                     )
 
                     if obj_val == "INTERRUPTED":
