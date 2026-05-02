@@ -267,10 +267,31 @@ def directory_shot_instance(
             for p, v in csv_data.items():
                 writer.writerow([p, v])
 
+    timed_out_folders = set()
+    for p, v in csv_data.items():
+        if "(TIMEOUT)" in v:
+            timed_out_folders.add(os.path.dirname(p))
+
     with open(csv_path, mode="a", newline="") as f:
         writer = csv.writer(f)
 
         for root, dirs, files in os.walk(in_dir):
+            abs_root = os.path.abspath(root)
+
+            if abs_root in timed_out_folders:
+                unprocessed_count = sum(
+                    1
+                    for f_name in files
+                    if f_name.endswith(".txt")
+                    and f_name != output_csv
+                    and os.path.abspath(os.path.join(root, f_name)) not in csv_data
+                )
+                if unprocessed_count > 0:
+                    print(
+                        f"\n[*] Skipping {unprocessed_count} unprocessed file(s) in {os.path.basename(root)} due to previous timeout."
+                    )
+                continue
+
             for file in files:
                 if not file.endswith(".txt") or file == output_csv:
                     continue
@@ -294,6 +315,14 @@ def directory_shot_instance(
 
                     writer.writerow([abs_path, obj_val])
                     csv_data[abs_path] = obj_val
+
+                    if "(TIMEOUT)" in str(obj_val):
+                        timed_out_folders.add(abs_root)
+                        print(
+                            f"[*] Timeout reached! Skipping any remaining files in '{os.path.basename(root)}'."
+                        )
+                        break
+
                 except KeyboardInterrupt:
                     print("\n[!] Run stopped by user. Halting batch safely.")
                     return

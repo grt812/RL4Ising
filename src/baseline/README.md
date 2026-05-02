@@ -34,7 +34,7 @@ python script.py -i src/data/graphs -o results/gurobi/newest --csv_out batch_res
 | -i | --in_dir | None | Input directory. Processes all .txt files found inside. |
 | -o | --out_dir | results/gurobi/newest | Output directory. All .log files, individual .txt solution files, and the CSV are saved here. Creates the folder if it does not exist. |
 | N/A | --csv_out | gurobi_batch_results.csv | The name of the aggregate CSV file. It is saved directly inside the --out_dir. |
-| N/A   | --retry_license | False | Retry entries that previously failed due to license limits. |
+| N/A | --retry_license | False | Retry entries that previously failed due to license limits. |
 | N/A | --retry_timeouts | False | Retry entries that previously hit the time limit. |
 
 ### Output Structure
@@ -66,6 +66,14 @@ If Gurobi reaches a defined time limit (e.g., 3600 seconds) before finding the o
 * Gurobi gracefully stops and saves the best objective value found up to that point.
 * The script records this partial solution to the .txt and .log files.
 * In the CSV, the value is appended with a (TIMEOUT) flag (e.g., -70.5 (TIMEOUT)) to allow for easy filtering of sub-optimal runs during data analysis.
+
+### Directory Timeout Skipping
+
+When processing large nested datasets, graphs within the same subfolder often share similar complexity and execution times. To optimize batch processing, the script tracks timeouts at the directory level:
+
+* Subfolder Monitoring: If any single graph triggers a time limit (TIMEOUT) during execution, the script flags the parent subfolder.
+* Automatic Bypassing: Once a subfolder is flagged, the script instantly bypasses all remaining unprocessed .txt files within that specific subfolder and moves forward to the next directory.
+* Prevention of Bottlenecks: This mechanism prevents the solver from stalling on a directory filled with massive graphs, allowing the batch to continue clearing out simpler subfolders elsewhere in the dataset.
 
 ### License Limit Protection
 
