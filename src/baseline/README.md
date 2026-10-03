@@ -7,6 +7,10 @@
 | ILOG CPLEX|
 | COPT      |
 
+## Gurobi Tutorial
+
+A basic tutorial for processing files can be found gurobi_qubo.ipynb 
+
 ## gurobi.py
 
 ### Single file

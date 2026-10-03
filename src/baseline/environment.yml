@@ -1,0 +1,8 @@
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.14
+  - natsort=8.4.0 
+  - networkx=3.6.1  
+  - gurobi=13.0.1 
